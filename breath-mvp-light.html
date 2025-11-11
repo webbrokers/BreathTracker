@@ -1,0 +1,381 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Breath Tracker — Light MVP</title>
+<style>
+  :root {
+    --bg:#f7fafc; --card:#ffffff; --fg:#0f172a; --muted:#64748b; --line:#e2e8f0;
+    --accent:#2563eb; --good:#16a34a; --warn:#f59e0b; --bad:#ef4444; --curve:#0ea5e9;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.45 system-ui, -apple-system, Segoe UI, Roboto, Inter, sans-serif;}
+  header{padding:14px 18px;border-bottom:1px solid var(--line);display:flex;gap:12px;align-items:center;flex-wrap:wrap;background:var(--card)}
+  header h1{font-size:16px;margin:0 8px 0 0;font-weight:700}
+  button,select,input[type="range"]{appearance:none;background:#eef2f7;border:1px solid #d6dee7;color:var(--fg);padding:8px 12px;border-radius:10px;cursor:pointer}
+  button:hover{border-color:#c7d2e0}
+  button.primary{background:#e7efff;border-color:#c7dbff}
+  main{display:grid;grid-template-columns:1fr 340px;gap:0}
+  #left{padding:12px}
+  #right{padding:12px;border-left:1px solid var(--line);background:var(--card)}
+  .row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+  .label{color:var(--muted)}
+  .stat{display:grid;grid-template-columns:1fr auto;gap:6px;padding:8px 0;border-bottom:1px dashed var(--line)}
+  .stat b{font-weight:700}
+  canvas{width:100%;height:320px;background:#fff;border:1px solid var(--line);border-radius:12px}
+  .note{color:var(--muted);font-size:12px;margin-top:6px}
+  .pill{display:inline-flex;align-items:center;gap:6px;padding:4px 8px;border:1px solid var(--line);border-radius:999px;color:var(--muted);font-size:12px;background:#fff}
+  .legend{display:flex;gap:8px;margin:8px 0 0 0}
+  .dot{width:10px;height:10px;border-radius:50%}
+  .dot.inhale{background:var(--good)}
+  .dot.exhale{background:var(--warn)}
+  .dot.peak{background:#38bdf8}
+  .dot.trough{background:#fb7185}
+  .grid{display:grid;gap:6px}
+  .spacer{flex:1}
+  a.link{color:var(--accent);text-decoration:none}
+  .bar{height:10px;background:#e5e7eb;border-radius:6px;overflow:hidden;border:1px solid var(--line)}
+  .bar > span{display:block;height:100%;width:0;background:linear-gradient(90deg,#93c5fd,#60a5fa)}
+</style>
+</head>
+<body>
+<header>
+  <h1>Breath Tracker — Light MVP</h1>
+  <div class="row">
+    <button id="start" class="primary">Start</button>
+    <button id="stop">Stop</button>
+    <button id="export">Export CSV</button>
+  </div>
+  <div class="spacer"></div>
+  <span class="pill">Микрофон • локальная обработка</span>
+</header>
+
+<main>
+  <section id="left">
+    <canvas id="plot" width="1400" height="360"></canvas>
+    <div class="legend">
+      <span class="pill"><span class="dot inhale"></span> Вдох</span>
+      <span class="pill"><span class="dot exhale"></span> Выдох</span>
+      <span class="pill"><span class="dot peak"></span> Пик</span>
+      <span class="pill"><span class="dot trough"></span> Впадина</span>
+    </div>
+    <div class="note">Поднеси микрофон ближе к носу/рту. Если «Уровень» ниже 10–20%, увеличь «Усиление».</div>
+  </section>
+
+  <aside id="right">
+    <div class="grid">
+      <div class="row"><span class="label">Калибровка (с):</span>
+        <input id="calibSecs" type="range" min="2" max="12" step="1" value="5">
+        <span id="calibVal">5</span>
+      </div>
+      <div class="row"><span class="label">Сглаживание (EMA):</span>
+        <input id="alpha" type="range" min="0.05" max="0.6" step="0.05" value="0.2">
+        <span id="alphaVal">0.20</span>
+      </div>
+      <div class="row"><span class="label">Чувствительность:</span>
+        <input id="sens" type="range" min="0" max="4" step="1" value="2">
+        <span id="sensVal">средняя</span>
+      </div>
+      <div class="row"><span class="label">Усиление (×):</span>
+        <input id="gain" type="range" min="1" max="20" step="1" value="6">
+        <span id="gainVal">6×</span>
+      </div>
+
+      <div class="stat"><span class="label">Статус</span><b id="status">Ожидание</b></div>
+      <div class="stat"><span class="label">Дыхание (бр/мин)</span><b id="brpm">—</b></div>
+      <div class="stat"><span class="label">Вдох (с)</span><b id="inh">—</b></div>
+      <div class="stat"><span class="label">Выдох (с)</span><b id="exh">—</b></div>
+      <div class="stat"><span class="label">I:E</span><b id="ie">—</b></div>
+      <div class="stat"><span class="label">Регулярность (%)</span><b id="coh">—</b></div>
+      <div class="stat"><span class="label">Уровень</span>
+        <div class="bar" style="width:180px"><span id="lvlbar"></span></div>
+      </div>
+
+      <div class="note">
+        Алгоритм: RMS → EMA → адаптивные пороги (медиана+MAD) → пики/впадины по производной. Экспорт — CSV.
+      </div>
+      <div class="note">Инструмент для биофидбека, не медицинская диагностика.</div>
+      <div class="note"><a class="link" href="#" id="quick6">Пейсинг 6 бр/мин</a></div>
+    </div>
+  </aside>
+</main>
+
+<script>
+(() => {
+  // ===== Helpers
+  const $ = id => document.getElementById(id);
+  function download(filename, text) {
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([text], {type: 'text/csv;charset=utf-8;'}));
+    a.download = filename; a.click(); URL.revokeObjectURL(a.href);
+  }
+  function robustStats(arr){
+    if (!arr.length) return {median:0, mad:0.0001};
+    const a = arr.slice().sort((x,y)=>x-y);
+    const m = a[Math.floor(a.length/2)];
+    const dev = a.map(v=>Math.abs(v-m)).sort((x,y)=>x-y);
+    const mad = dev[Math.floor(dev.length/2)] || 0.0001;
+    return {median:m, mad: mad || 0.0001};
+  }
+  function clampInRange(v,min,max){ return v>=min && v<=max; }
+
+  // ===== DOM
+  const startBtn=$('start'), stopBtn=$('stop'), exportBtn=$('export');
+  const plot=$('plot'), g=plot.getContext('2d');
+  const statusEl=$('status'), brpmEl=$('brpm'), inhEl=$('inh'), exhEl=$('exh'), ieEl=$('ie'), cohEl=$('coh');
+  const lvlbar=$('lvlbar');
+  const alphaRange=$('alpha'), alphaVal=$('alphaVal');
+  const calibRange=$('calibSecs'), calibVal=$('calibVal');
+  const sensRange=$('sens'), sensVal=$('sensVal');
+  const gainRange=$('gain'), gainVal=$('gainVal');
+  const quick6=$('quick6');
+
+  const sensLabels=['низкая','ниже ср.','средняя','выше ср.','высокая'];
+  const sensShift=[-0.8,-0.4,0,0.4,0.8];
+
+  // ===== State
+  let audioCtx=null, source=null, processor=null, stream=null;
+  let ema=0, running=false, calibrating=false, calibEnd=0;
+  let envHistory=[], derPrev=0;
+  let lastPeak=null, lastTrough=null, inhaleStartT=null;
+  let lastCycle=null, cycles=[], drawBuf=[];
+  let paceOn=false, paceStart=0;
+
+  // UI binds
+  alphaRange.oninput=()=>alphaVal.textContent=(+alphaRange.value).toFixed(2);
+  calibRange.oninput=()=>calibVal.textContent=calibRange.value;
+  sensRange.oninput=()=>sensVal.textContent=sensLabels[sensRange.value|0];
+  gainRange.oninput=()=>gainVal.textContent=gainRange.value+'×';
+  quick6.onclick=(e)=>{e.preventDefault(); paceOn=!paceOn; paceStart=performance.now()/1000; quick6.textContent=paceOn?'Выключить пейсинг':'Пейсинг 6 бр/мин';};
+
+  // ===== Start/Stop
+  async function start(){
+    if (running) return;
+    try{
+      stream = await navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation:false, noiseSuppression:false, autoGainControl:false }
+      });
+    }catch(e){
+      alert('Нужен доступ к микрофону. Лучше открыть файл через http(s). Ошибка: '+e.message);
+      return;
+    }
+    audioCtx = new (window.AudioContext||window.webkitAudioContext)({latencyHint:'interactive'});
+    source = audioCtx.createMediaStreamSource(stream);
+
+    // Пользовательское усиление перед RMS
+    const gainNode = audioCtx.createGain();
+    gainNode.gain.value = +gainRange.value;
+
+    // Небольшой highpass на DC
+    const hp = audioCtx.createBiquadFilter(); hp.type='highpass'; hp.frequency.value=20;
+
+    // ScriptProcessor (простая поддержка)
+    processor = audioCtx.createScriptProcessor(1024,1,1);
+    processor.onaudioprocess = onAudioProcess; // ВАЖНО: назначаем сразу
+
+    source.connect(gainNode);
+    gainNode.connect(hp);
+    hp.connect(processor);
+    processor.connect(audioCtx.destination); // нужно для Chrome
+
+    resetLogic(true);
+    running=true; calibrate();
+    statusEl.textContent='Калибровка…';
+  }
+
+  function stop(){
+    running=false;
+    if (processor){ try{processor.disconnect();}catch{} processor.onaudioprocess=null; }
+    if (audioCtx){ try{audioCtx.close();}catch{} }
+    if (stream){ stream.getTracks().forEach(t=>t.stop()); }
+    audioCtx=source=processor=stream=null;
+    statusEl.textContent='Остановлено';
+  }
+
+  startBtn.onclick=start;
+  stopBtn.onclick=stop;
+
+  // ===== Core processing
+  function onAudioProcess(e){
+    const ch = e.inputBuffer.getChannelData(0);
+    // RMS кадра
+    let sum=0; for(let i=0;i<ch.length;i++) sum += ch[i]*ch[i];
+    const rms = Math.sqrt(sum/ch.length);
+
+    // EMA
+    const alpha = +alphaRange.value;
+    ema = alpha*rms + (1-alpha)*ema;
+
+    envHistory.push(ema);
+    if (envHistory.length > 4800) envHistory.shift();
+
+    // Производная (на графике)
+    const prev = drawBuf.length?drawBuf[drawBuf.length-1]:ema;
+    const der = ema - prev;
+
+    // Для графика (сырой уровень перед нормировкой)
+    drawBuf.push(ema);
+    if (drawBuf.length > plot.width) drawBuf.shift();
+
+    // Адаптивные пороги
+    const {median, mad} = robustStats(envHistory);
+    const hi = median + (1.8 + sensShift[sensRange.value|0]) * mad;
+    const lo = Math.max(median - 0.2*mad, 0);
+
+    const now = audioCtx.currentTime;
+
+    // Пик (верх вдоха): d>0 -> d<=0 и выше hi
+    if (derPrev>0 && der<=0 && ema>hi){
+      lastPeak = {t:now, v:ema};
+      if (lastTrough){
+        const tInhale = now - lastTrough.t;
+        if (!lastCycle) lastCycle={};
+        lastCycle.tInhale = clampInRange(tInhale,0.3,15)?tInhale:undefined;
+        inhaleStartT = lastTrough.t;
+      }
+    }
+    // Впадина (низ выдоха): d<0 -> d>=0 и ниже lo
+    if (derPrev<0 && der>=0 && ema<lo){
+      lastTrough = {t:now, v:ema};
+      if (lastPeak){
+        const tExhale = now - lastPeak.t;
+        if (!lastCycle) lastCycle={};
+        lastCycle.tExhale = clampInRange(tExhale,0.3,20)?tExhale:undefined;
+
+        if (inhaleStartT!=null){
+          lastCycle.tStart = inhaleStartT;
+          lastCycle.tEnd = now;
+          lastCycle.tCycle = (lastCycle.tInhale||0) + (lastCycle.tExhale||0);
+          lastCycle.peakV = lastPeak.v; lastCycle.troughV = lastTrough.v;
+          if (clampInRange(lastCycle.tCycle,1.5,15)){
+            cycles.push(lastCycle);
+            if (cycles.length>120) cycles.shift();
+          }
+          lastCycle = {};
+        }
+      }
+    }
+    derPrev = der;
+
+    // Калибровка
+    if (calibrating){
+      const remain = Math.max(0, calibEnd - now);
+      statusEl.textContent = `Калибровка… ${remain.toFixed(1)} с`;
+      if (remain<=0){ calibrating=false; statusEl.textContent='Идёт измерение'; }
+    } else statusEl.textContent='Идёт измерение';
+
+    // Обновить метрики и уровень
+    updateStats(ema, median, mad);
+  }
+
+  function resetLogic(full=false){
+    ema=0; envHistory=[]; derPrev=0; lastPeak=lastTrough=null; inhaleStartT=null;
+    if (full){ cycles=[]; lastCycle=null; drawBuf=[]; }
+  }
+  function currentBRPM(){
+    if (cycles.length<2) return null;
+    const lastN=cycles.slice(-5).map(c=>c.tCycle).filter(Boolean);
+    if (!lastN.length) return null;
+    const med=lastN.sort((a,b)=>a-b)[Math.floor(lastN.length/2)];
+    return med?60/med:null;
+  }
+  function updateStats(level, median, mad){
+    // Индикатор уровня (0..~median+6*mad)
+    const scaleMax = median + 6*mad + 1e-6;
+    const ratio = Math.max(0, Math.min(1, level/scaleMax));
+    lvlbar.style.width = (ratio*100).toFixed(0)+'%';
+
+    const br = currentBRPM();
+    brpmEl.textContent = br ? br.toFixed(1) : '—';
+
+    const last = cycles[cycles.length-1];
+    inhEl.textContent = last?.tInhale ? last.tInhale.toFixed(2) : '—';
+    exhEl.textContent = last?.tExhale ? last.tExhale.toFixed(2) : '—';
+    ieEl.textContent  = (last?.tInhale && last?.tExhale) ? (last.tInhale/last.tExhale).toFixed(2) : '—';
+
+    const last8 = cycles.slice(-8).map(c=>c.tCycle).filter(Boolean);
+    if (last8.length>=3){
+      const mean = last8.reduce((s,x)=>s+x,0)/last8.length;
+      const sd   = Math.sqrt(last8.reduce((s,x)=>s+(x-mean)*(x-mean),0)/last8.length);
+      let coh = 1 - (sd/mean);
+      coh = Math.max(0, Math.min(1, coh));
+      cohEl.textContent = Math.round(coh*100);
+    } else cohEl.textContent='—';
+  }
+
+  // ===== Drawing
+  function drawLoop(){
+    // grid
+    g.clearRect(0,0,plot.width,plot.height);
+    g.strokeStyle='#e5e7eb'; g.lineWidth=1; g.globalAlpha=1;
+    g.beginPath();
+    for (let x=0;x<plot.width;x+=70){ g.moveTo(x,0); g.lineTo(x,plot.height); }
+    for (let y=0;y<plot.height;y+=60){ g.moveTo(0,y); g.lineTo(plot.width,y); }
+    g.stroke();
+
+    // curve
+    g.lineWidth=2; g.strokeStyle='var(--curve)';
+    g.beginPath();
+    const N = drawBuf.length;
+    const stats = robustStats(envHistory.length?envHistory:drawBuf);
+    const scale = 1/(stats.median + 4*stats.mad + 1e-6);
+    for (let i=0;i<N;i++){
+      const v = Math.max(0, Math.min(1, drawBuf[i]*scale));
+      const y = plot.height - v*(plot.height-6) - 3;
+      const x = plot.width - (N - i);
+      if (i===0) g.moveTo(x,y); else g.lineTo(x,y);
+    }
+    g.stroke();
+
+    // markers (приблизительно по времени)
+    function markPoint(pt, color){
+      if (!audioCtx || !pt) return;
+      const age = (audioCtx.currentTime - pt.t);
+      const x = plot.width - Math.floor(age * 60);
+      if (x<0 || x>plot.width) return;
+      const y = 18;
+      g.fillStyle = color;
+      g.beginPath(); g.arc(x, y, 5, 0, Math.PI*2); g.fill();
+    }
+    markPoint(lastPeak,  '#38bdf8');
+    markPoint(lastTrough,'#fb7185');
+
+    // pacing bubble
+    if (paceOn){
+      const t = performance.now()/1000 - paceStart;
+      const period = 10, inhaleFrac = 0.45;
+      const ph = (t%period)/period;
+      const inhale = ph<inhaleFrac;
+      const r = 10 + (inhale? (ph/inhaleFrac):(1-(ph-inhaleFrac)/(1-inhaleFrac)))*20;
+      g.save();
+      g.globalAlpha=0.9;
+      g.fillStyle = inhale? 'var(--good)' : 'var(--warn)';
+      g.beginPath(); g.arc(plot.width-30, plot.height-30, r, 0, Math.PI*2); g.fill();
+      g.restore();
+    }
+    requestAnimationFrame(drawLoop);
+  }
+  requestAnimationFrame(drawLoop);
+
+  // ===== Export
+  exportBtn.onclick = () => {
+    const rows = [['t_start(s)','t_end(s)','cycle(s)','inhale(s)','exhale(s)','brpm','I:E','peak_amp','trough_amp']];
+    for (const c of cycles) {
+      const brpm = c.tCycle?60/c.tCycle:'';
+      const ie = (c.tInhale&&c.tExhale)?(c.tInhale/c.tExhale).toFixed(2):'';
+      rows.push([c.tStart?.toFixed(3)||'', c.tEnd?.toFixed(3)||'', c.tCycle?.toFixed(3)||'', c.tInhale?.toFixed(3)||'', c.tExhale?.toFixed(3)||'', brpm?brpm.toFixed(2):'', ie, c.peakV?.toFixed(5)||'', c.troughV?.toFixed(5)||'']);
+    }
+    download('breath_session.csv', rows.map(r=>r.join(',')).join('\n'));
+  };
+
+  // ===== Calibration
+  function calibrate(){
+    calibrating=true;
+    calibEnd = (audioCtx?audioCtx.currentTime:0) + (parseInt(calibRange.value)||5);
+  }
+
+})();
+</script>
+</body>
+</html>
