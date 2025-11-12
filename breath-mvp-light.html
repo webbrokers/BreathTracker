@@ -8,6 +8,7 @@
   :root {
     --bg:#f7fafc; --card:#ffffff; --fg:#0f172a; --muted:#64748b; --line:#e2e8f0;
     --accent:#2563eb; --good:#16a34a; --warn:#f59e0b; --bad:#ef4444; --curve:#0ea5e9;
+    --ref:#cbd5f5;
   }
   *{box-sizing:border-box}
   body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.45 system-ui,-apple-system,Segoe UI,Roboto,Inter,sans-serif;}
@@ -16,6 +17,7 @@
   button,select,input[type="range"]{appearance:none;background:#eef2f7;border:1px solid #d6dee7;color:var(--fg);padding:8px 12px;border-radius:10px;cursor:pointer}
   button:hover{border-color:#c7d2e0}
   button.primary{background:#e7efff;border-color:#c7dbff}
+  button.recording{background:#fee2e2;border-color:#fecaca;color:#b91c1c}
   main{display:grid;grid-template-columns:1fr 340px;gap:0}
   #left{padding:12px}
   #right{padding:12px;border-left:1px solid var(--line);background:var(--card)}
@@ -23,7 +25,7 @@
   .label{color:var(--muted)}
   .stat{display:grid;grid-template-columns:1fr auto;gap:6px;padding:8px 0;border-bottom:1px dashed var(--line)}
   .stat b{font-weight:700}
-  canvas{width:100%;height:320px;background:#fff;border:1px solid var(--line);border-radius:12px}
+  canvas{display:block;width:100%;height:340px;background:#fff;border:1px solid var(--line);border-radius:12px}
   .note{color:var(--muted);font-size:12px;margin-top:6px}
   .pill{display:inline-flex;align-items:center;gap:6px;padding:4px 8px;border:1px solid var(--line);border-radius:999px;color:var(--muted);font-size:12px;background:#fff}
   .legend{display:flex;gap:8px;margin:8px 0 0 0}
@@ -37,17 +39,35 @@
   a.link{color:var(--accent);text-decoration:none}
   .bar{height:10px;background:#e5e7eb;border-radius:6px;overflow:hidden;border:1px solid var(--line)}
   .bar > span{display:block;height:100%;width:0;background:linear-gradient(90deg,#93c5fd,#60a5fa)}
+  .record-badge{font-size:12px;font-weight:600;display:flex;align-items:center;gap:6px;color:var(--muted)}
+  .record-badge::before{content:"";width:8px;height:8px;border-radius:50%;background:var(--muted);box-shadow:0 0 0 0 rgba(239,68,68,0.4);transition:all .2s ease}
+  .record-badge.on{color:#b91c1c}
+  .record-badge.on::before{background:#ef4444;box-shadow:0 0 0 6px rgba(239,68,68,0.22)}
+  .orb-wrapper{margin:18px 0 0;display:flex;align-items:center;gap:18px;flex-wrap:wrap}
+  .orb-wrapper small{color:var(--muted)}
+  #breathOrb{width:120px;height:120px;border-radius:50%;background:radial-gradient(circle at center,#dbeafe,#93c5fd);box-shadow:0 6px 24px rgba(37,99,235,0.35);transition:transform .15s ease,box-shadow .15s ease,background .2s ease}
+  #breathOrb.inhale{background:radial-gradient(circle at center,#dcfce7,#86efac)}
+  #breathOrb.exhale{background:radial-gradient(circle at center,#fef3c7,#fcd34d)}
+  #breathOrb.idle{opacity:0.7}
+  #breathOrb::after{content:"";position:absolute;inset:6px;border-radius:50%;border:1px dashed rgba(255,255,255,0.5)}
+  #breathOrb{position:relative}
+  @media (max-width:980px){
+    main{grid-template-columns:1fr}
+    #right{border-left:none;border-top:1px solid var(--line)}
+    header{flex-direction:column;align-items:flex-start}
+  }
 </style>
 </head>
 <body>
 <header>
   <h1>Breath Tracker — лёгкий MVP</h1>
   <div class="row">
-    <button id="start" class="primary">Старт</button>
+    <button id="record" class="primary">Запись</button>
     <button id="stop">Стоп</button>
     <button id="export">Экспорт CSV</button>
   </div>
   <div class="spacer"></div>
+  <span id="recordBadge" class="record-badge">Нет записи</span>
   <span class="pill">Микрофон • локальная обработка</span>
 </header>
 
@@ -61,25 +81,30 @@
       <span class="pill"><span class="dot trough"></span> Впадина</span>
     </div>
     <div class="note">Поднесите микрофон ближе к носу/рту. Если «Уровень» ниже 10–20 %, увеличьте «Усиление» или уменьшите шум.</div>
+    <div class="note">Серая линия — эталонный цикл (вдох 4 с → пауза 2 с → выдох 6 с → пауза 3 с).</div>
+    <div class="orb-wrapper">
+      <div id="breathOrb" class="idle"></div>
+      <small>«Мембрана» повторяет амплитуду дыхания и помогает использовать интерфейс на мобильных устройствах.</small>
+    </div>
   </section>
 
   <aside id="right">
     <div class="grid">
       <div class="row"><span class="label">Калибровка (с):</span>
-        <input id="calibSecs" type="range" min="2" max="12" step="1" value="2">
-        <span id="calibVal">2</span>
+        <input id="calibSecs" type="range" min="2" max="12" step="1" value="5">
+        <span id="calibVal">5</span>
       </div>
       <div class="row"><span class="label">Сглаживание (EMA):</span>
-        <input id="alpha" type="range" min="0.05" max="0.6" step="0.05" value="0.10">
-        <span id="alphaVal">0.10</span>
+        <input id="alpha" type="range" min="0.05" max="0.6" step="0.05" value="0.20">
+        <span id="alphaVal">0.20</span>
       </div>
       <div class="row"><span class="label">Чувствительность:</span>
-        <input id="sens" type="range" min="0" max="4" step="1" value="3">
-        <span id="sensVal">выше ср.</span>
+        <input id="sens" type="range" min="0" max="4" step="1" value="2">
+        <span id="sensVal">Средняя</span>
       </div>
       <div class="row"><span class="label">Усиление (×):</span>
-        <input id="gain" type="range" min="1" max="20" step="1" value="1">
-        <span id="gainVal">1×</span>
+        <input id="gain" type="range" min="1" max="20" step="1" value="6">
+        <span id="gainVal">6×</span>
       </div>
 
       <div class="stat"><span class="label">Статус</span><b id="status">Ожидание</b></div>
@@ -88,6 +113,7 @@
       <div class="stat"><span class="label">Выдох (с)</span><b id="exh">—</b></div>
       <div class="stat"><span class="label">I:E</span><b id="ie">—</b></div>
       <div class="stat"><span class="label">Регулярность (%)</span><b id="coh">—</b></div>
+      <div class="stat"><span class="label">Фаза</span><b id="phase">—</b></div>
       <div class="stat"><span class="label">Уровень</span>
         <div class="bar"><span id="lvlbar"></span></div>
       </div>
@@ -112,20 +138,25 @@ class RmsProcessor extends AudioWorkletProcessor {
       output[0].fill(0);
     }
     if (input && input[0] && input[0].length) {
+      const ch = input[0];
       let sum = 0;
-      const data = input[0];
-      for (let i = 0; i < data.length; i++) {
-        const sample = data[i];
+      for (let i = 0; i < ch.length; i++) {
+        const sample = ch[i];
         sum += sample * sample;
       }
-      const rms = Math.sqrt(sum / data.length);
-      this.port.postMessage(rms);
+      const rms = Math.sqrt(sum / ch.length);
+      this.port.postMessage({ rms, frames: ch.length });
     }
     return true;
   }
 }
 registerProcessor('rms-processor', RmsProcessor);
 `;
+
+  const HISTORY_SEC = 30;
+  const REF_BLOCK = 1024;
+  const MIN_SWING = 0.002;
+  const MIN_MAD = 0.0002;
 
   // ===== Helpers
   const $ = id => document.getElementById(id);
@@ -143,28 +174,75 @@ registerProcessor('rms-processor', RmsProcessor);
     return {median:m, mad: mad || 0.0001};
   }
   function clampInRange(v,min,max){ return v>=min && v<=max; }
+  function levelToRatio(v, median, mad){
+    const floor = Math.max(0, median - 1.5*mad);
+    const span = Math.max(MIN_MAD*4, mad*8);
+    const relative = Math.max(0, v - floor);
+    return Math.max(0, Math.min(1, relative / span));
+  }
 
   // ===== DOM
-  const startBtn=$('start'), stopBtn=$('stop'), exportBtn=$('export');
+  const recordBtn=$('record'), stopBtn=$('stop'), exportBtn=$('export');
+  const recordBadge=$('recordBadge');
   const plot=$('plot'), g=plot.getContext('2d');
   const statusEl=$('status'), brpmEl=$('brpm'), inhEl=$('inh'), exhEl=$('exh'), ieEl=$('ie'), cohEl=$('coh');
+  const phaseEl=$('phase');
   const lvlbar=$('lvlbar');
   const alphaRange=$('alpha'), alphaVal=$('alphaVal');
   const calibRange=$('calibSecs'), calibVal=$('calibVal');
   const sensRange=$('sens'), sensVal=$('sensVal');
   const gainRange=$('gain'), gainVal=$('gainVal');
   const quick6=$('quick6');
+  const orb=$('breathOrb');
 
-  const sensLabels=['Очень низкая','Ниже ср.','Средняя','выше ср.','Очень высокая'];
+  const sensLabels=['Очень низкая','Ниже ср.','Средняя','Выше ср.','Очень высокая'];
   const sensShift=[-0.8,-0.4,0,0.4,0.8];
+
+  let canvasWidth=plot.clientWidth||plot.width;
+  let canvasHeight=plot.clientHeight||plot.height;
+  function resizeCanvas(){
+    canvasWidth = plot.clientWidth||plot.width;
+    canvasHeight = plot.clientHeight||plot.height;
+    if (!canvasWidth) canvasWidth = plot.width;
+    if (!canvasHeight) canvasHeight = 340;
+    const dpr = window.devicePixelRatio || 1;
+    plot.width = Math.floor(canvasWidth * dpr);
+    plot.height = Math.floor(canvasHeight * dpr);
+    g.setTransform(dpr,0,0,dpr,0,0);
+  }
+  window.addEventListener('resize', resizeCanvas, {passive:true});
+  resizeCanvas();
 
   // ===== State
   let audioCtx=null, source=null, processor=null, stream=null, workletUrl=null;
   let ema=0, running=false, calibrating=false, calibEnd=0;
-  let envHistory=[], derPrev=0;
+  let envHistory=[], derPrev=0, prevEma=0;
   let lastPeak=null, lastTrough=null, inhaleStartT=null;
-  let lastCycle=null, cycles=[], drawBuf=[];
+  let lastCycle=null, cycles=[], drawPoints=[];
   let paceOn=false, paceStart=0;
+  let lastEnvelopeTime=null;
+  let currentPhase='';
+  let recording=false, recordSegments=[], activeRecordSegment=null;
+  let lastDisplayRatio=0, lastPlotStoreTime=0;
+  let phaseSegments=[], activePhaseSegment=null;
+  let phaseEvents=[];
+  let resumeBound=false;
+
+  const DRAW_INTERVAL = 0.12; // ~8 Гц
+  const PHASE_COLORS = {
+    'Вдох':'var(--good)',
+    'Выдох':'var(--warn)',
+    'Пик':'#38bdf8',
+    'Впадина':'#fb7185',
+    '': 'var(--curve)'
+  };
+  const IDEAL_PATTERN = [
+    {type:'Вдох', dur:4},
+    {type:'Пауза1', dur:2},
+    {type:'Выдох', dur:6},
+    {type:'Пауза2', dur:3}
+  ];
+  const IDEAL_TOTAL = IDEAL_PATTERN.reduce((s,p)=>s+p.dur,0);
 
   // UI binds
   alphaRange.oninput=()=>alphaVal.textContent=(+alphaRange.value).toFixed(2);
@@ -182,8 +260,106 @@ registerProcessor('rms-processor', RmsProcessor);
   calibRange.oninput();
   sensRange.oninput();
   gainRange.oninput();
+  updateRecordingUI();
+
+  function updateRecordingUI(){
+    recordBtn.textContent = recording ? 'Идёт запись' : 'Запись';
+    recordBtn.classList.toggle('recording', recording);
+    recordBadge.classList.toggle('on', recording);
+    recordBadge.textContent = recording ? 'Идёт запись' : 'Нет записи';
+  }
+
+  function currentTime(){
+    return (lastEnvelopeTime ?? audioCtx?.currentTime) || performance.now()/1000;
+  }
+
+  function trimRecordSegments(now=currentTime()){
+    recordSegments = recordSegments.filter(seg=>{
+      const end = seg.end ?? now;
+      return now - end < HISTORY_SEC*2;
+    });
+  }
+
+  function setRecordingState(next){
+    if (next === recording) return;
+    recording = next;
+    if (recording){
+      activeRecordSegment = {start:currentTime(), end:null};
+      recordSegments.push(activeRecordSegment);
+      trimRecordSegments();
+    } else if (activeRecordSegment){
+      activeRecordSegment.end = currentTime();
+      activeRecordSegment=null;
+    }
+    updateRecordingUI();
+  }
+
+  function isRecordedAt(time){
+    const now = currentTime();
+    return recordSegments.some(seg=>{
+      const segEnd = seg.end ?? now;
+      return time >= seg.start && time <= segEnd;
+    });
+  }
+
+  function setPhase(phase, time=currentTime()){
+    currentPhase = phase || '';
+    phaseEl.textContent = currentPhase || '—';
+    if (running && !calibrating){
+      statusEl.textContent = currentPhase || 'Поток активен';
+    }
+    if (phase==='Вдох' || phase==='Выдох'){
+      if (activePhaseSegment && activePhaseSegment.type===phase){
+        activePhaseSegment.end = time;
+      } else {
+        if (activePhaseSegment){
+          activePhaseSegment.end = time;
+          phaseSegments.push(activePhaseSegment);
+        }
+        activePhaseSegment = {start:time, end:null, type:phase};
+      }
+      trimPhaseSegments(time);
+    } else if (!phase && activePhaseSegment){
+      activePhaseSegment.end = time;
+      phaseSegments.push(activePhaseSegment);
+      activePhaseSegment=null;
+      trimPhaseSegments(time);
+    }
+  }
+
+  function trimPhaseSegments(now=currentTime()){
+    phaseSegments = phaseSegments.filter(seg=>{
+      const end = seg.end ?? now;
+      return now - end < HISTORY_SEC*2;
+    });
+  }
+
+  function addPhaseEvent(type, time, value){
+    phaseEvents.push({type, t:time, v:value});
+    while(phaseEvents.length>400){ phaseEvents.shift(); }
+  }
 
   // ===== Start/Stop
+  async function ensureRunning(){
+    if (running) return true;
+    try{
+      await start();
+      return true;
+    }catch(e){
+      console.warn('Не удалось запустить поток', e);
+      return false;
+    }
+  }
+
+  function bindResumeHandler(){
+    if (resumeBound) return;
+    const resume = ()=>{ if (audioCtx && audioCtx.state==='suspended'){ audioCtx.resume(); } };
+    ['touchstart','pointerdown'].forEach(evt=>{
+      window.addEventListener(evt, resume, {passive:true});
+    });
+    resumeBound=true;
+  }
+
   async function start(){
     if (running) return;
     try{
@@ -191,10 +367,13 @@ registerProcessor('rms-processor', RmsProcessor);
         audio: { echoCancellation:false, noiseSuppression:false, autoGainControl:false }
       });
     }catch(e){
-      alert('Не удалось получить доступ к микрофону. Проверьте https и системные разрешения. Детали: '+e.message);
-      return;
+      statusEl.textContent = 'Нужен доступ к микрофону';
+      phaseEl.textContent = '—';
+      updateRecordingUI();
+      throw e;
     }
     audioCtx = new (window.AudioContext||window.webkitAudioContext)({latencyHint:'interactive'});
+    bindResumeHandler();
     source = audioCtx.createMediaStreamSource(stream);
 
     const gainNode = audioCtx.createGain();
@@ -218,6 +397,7 @@ registerProcessor('rms-processor', RmsProcessor);
     resetLogic(true);
     running=true; calibrate();
     statusEl.textContent='Калибровка...';
+    phaseEl.textContent='—';
   }
 
   function stop(){
@@ -230,14 +410,24 @@ registerProcessor('rms-processor', RmsProcessor);
     if (stream){ stream.getTracks().forEach(t=>t.stop()); }
     if (workletUrl){ URL.revokeObjectURL(workletUrl); workletUrl=null; }
     audioCtx=source=processor=stream=null;
+    resetLogic(true);
+    setRecordingState(false);
+    recordSegments=[]; activeRecordSegment=null;
     statusEl.textContent='Ожидание';
-    brpmEl.textContent=inhEl.textContent=exhEl.textContent=ieEl.textContent=cohEl.textContent='—';
     lvlbar.style.width='0%';
+    brpmEl.textContent=inhEl.textContent=exhEl.textContent=ieEl.textContent=cohEl.textContent='—';
     paceOn=false; quick6.textContent='Пейсинг 6 бр/мин';
+    updateOrb(0,'');
   }
 
-  startBtn.onclick=start;
-  stopBtn.onclick=stop;
+  recordBtn.onclick=async ()=>{
+    const ok = await ensureRunning();
+    if (!ok) return;
+    setRecordingState(!recording);
+  };
+  stopBtn.onclick=()=>{
+    stop();
+  };
 
   async function createWorkletNode(){
     if (!audioCtx || !audioCtx.audioWorklet || typeof AudioWorkletNode === 'undefined'){
@@ -255,28 +445,42 @@ registerProcessor('rms-processor', RmsProcessor);
   }
 
   // ===== Core processing
-  function handleEnvelope(rms){
+  function handleEnvelope(payload){
     if (!audioCtx) return;
-    const alpha = +alphaRange.value;
-    ema = alpha*rms + (1-alpha)*ema;
+    const msg = (typeof payload === 'number') ? {rms:payload, frames:REF_BLOCK} : (payload || {});
+    const rms = msg.rms ?? 0;
+    const frames = msg.frames || REF_BLOCK;
+
+    const alphaUser = +alphaRange.value;
+    const scaledAlpha = 1 - Math.pow(1 - alphaUser, Math.max(1, frames)/REF_BLOCK);
+    ema = scaledAlpha*rms + (1-scaledAlpha)*ema;
 
     envHistory.push(ema);
     if (envHistory.length > 4800) envHistory.shift();
 
-    const prev = drawBuf.length?drawBuf[drawBuf.length-1]:ema;
-    const der = ema - prev;
+    const der = ema - prevEma;
+    prevEma = ema;
 
-    drawBuf.push(ema);
-    if (drawBuf.length > plot.width) drawBuf.shift();
+    if (lastEnvelopeTime==null) lastEnvelopeTime = audioCtx.currentTime;
+    else lastEnvelopeTime += frames / audioCtx.sampleRate;
+    const now = lastEnvelopeTime;
+    trimRecordSegments(now);
+
+    if (now - lastPlotStoreTime >= DRAW_INTERVAL){
+      drawPoints.push({t:now, v:ema});
+      lastPlotStoreTime = now;
+    }
+    while(drawPoints.length && now - drawPoints[0].t > HISTORY_SEC+2){ drawPoints.shift(); }
 
     const {median, mad} = robustStats(envHistory);
-    const hi = median + (1.8 + sensShift[sensRange.value|0]) * mad;
-    const lo = Math.max(median - 0.2*mad, 0);
-
-    const now = audioCtx.currentTime;
+    const safeMad = Math.max(mad, MIN_MAD);
+    const hi = median + (1.8 + sensShift[sensRange.value|0]) * safeMad;
+    const lo = Math.max(median - 0.2*safeMad, 0);
 
     if (derPrev>0 && der<=0 && ema>hi){
       lastPeak = {t:now, v:ema};
+      addPhaseEvent('Пик', now, ema);
+      setPhase('Выдох', now);
       if (lastTrough){
         const tInhale = now - lastTrough.t;
         if (!lastCycle) lastCycle={};
@@ -287,6 +491,8 @@ registerProcessor('rms-processor', RmsProcessor);
 
     if (derPrev<0 && der>=0 && ema<lo){
       lastTrough = {t:now, v:ema};
+      addPhaseEvent('Впадина', now, ema);
+      setPhase('Вдох', now);
       if (lastPeak){
         const tExhale = now - lastPeak.t;
         if (!lastCycle) lastCycle={};
@@ -297,10 +503,13 @@ registerProcessor('rms-processor', RmsProcessor);
           lastCycle.tEnd = now;
           lastCycle.tCycle = (lastCycle.tInhale||0) + (lastCycle.tExhale||0);
           lastCycle.peakV = lastPeak.v; lastCycle.troughV = lastTrough.v;
-          if (clampInRange(lastCycle.tCycle,1.5,15)){
+          const swing = Math.abs((lastCycle.peakV||0) - (lastCycle.troughV||0));
+          const minSwing = Math.max(MIN_SWING, 0.35*safeMad);
+          if (clampInRange(lastCycle.tCycle,1.5,15) && swing>=minSwing){
             cycles.push(lastCycle);
             if (cycles.length>120) cycles.shift();
           }
+          lastCycle.recorded = isRecordedAt(now);
           lastCycle = {};
         }
       }
@@ -310,15 +519,24 @@ registerProcessor('rms-processor', RmsProcessor);
     if (calibrating){
       const remain = Math.max(0, calibEnd - now);
       statusEl.textContent = `Калибровка: ${remain.toFixed(1)} с`;
-      if (remain<=0){ calibrating=false; statusEl.textContent='Поток активен'; }
-    } else statusEl.textContent='Поток активен';
+      if (remain<=0){
+        calibrating=false;
+        statusEl.textContent = currentPhase || 'Поток активен';
+      }
+    } else if (running){
+      statusEl.textContent = currentPhase || 'Поток активен';
+    }
+    phaseEl.textContent = currentPhase || '—';
 
-    updateStats(ema, median, mad);
+    updateStats(ema, median, safeMad);
   }
 
   function resetLogic(full=false){
-    ema=0; envHistory=[]; derPrev=0; lastPeak=lastTrough=null; inhaleStartT=null; calibrating=false;
-    if (full){ cycles=[]; lastCycle=null; drawBuf=[]; }
+    ema=0; envHistory=[]; derPrev=0; prevEma=0; lastPeak=lastTrough=null; inhaleStartT=null;
+    lastEnvelopeTime=null; lastPlotStoreTime=0;
+    phaseSegments=[]; activePhaseSegment=null; phaseEvents=[];
+    setPhase('', currentTime());
+    if (full){ cycles=[]; lastCycle=null; drawPoints=[]; }
   }
   function currentBRPM(){
     if (cycles.length<2) return null;
@@ -328,9 +546,10 @@ registerProcessor('rms-processor', RmsProcessor);
     return med?60/med:null;
   }
   function updateStats(level, median, mad){
-    const scaleMax = median + 6*mad + 1e-6;
-    const ratio = Math.max(0, Math.min(1, level/scaleMax));
+    const ratio = levelToRatio(level, median, mad);
+    lastDisplayRatio = ratio;
     lvlbar.style.width = (ratio*100).toFixed(0)+'%';
+    updateOrb(ratio, currentPhase);
 
     const br = currentBRPM();
     brpmEl.textContent = br ? br.toFixed(1) : '—';
@@ -352,96 +571,91 @@ registerProcessor('rms-processor', RmsProcessor);
 
   // ===== Drawing
   function drawLoop(){
-    g.clearRect(0,0,plot.width,plot.height);
-    
-    // Отступы для подписей осей
-    const paddingLeft = 45;   // для процентов Y-оси
-    const paddingBottom = 25; // для времени X-оси
-    const paddingTop = 10;
-    const paddingRight = 10;
-    const plotWidth = plot.width - paddingLeft - paddingRight;
-    const plotHeight = plot.height - paddingTop - paddingBottom;
-    const plotX0 = paddingLeft;
-    const plotY0 = paddingTop;
-    const plotX1 = plot.width - paddingRight;
-    const plotY1 = plot.height - paddingBottom;
+    g.clearRect(0,0,canvasWidth,canvasHeight);
+    const latestTime = drawPoints.length ? drawPoints[drawPoints.length-1].t : 0;
+    const pxPerSec = canvasWidth / HISTORY_SEC;
 
-    // Сетка
     g.strokeStyle='#e5e7eb'; g.lineWidth=1; g.globalAlpha=1;
     g.beginPath();
-    // Вертикальные линии сетки (время)
-    for (let x=plotX0;x<=plotX1;x+=70){ 
-      g.moveTo(x,plotY0); 
-      g.lineTo(x,plotY1); 
+    for (let sec=0; sec<=HISTORY_SEC; sec+=5){
+      const x = canvasWidth - sec*pxPerSec;
+      g.moveTo(x,0); g.lineTo(x,canvasHeight);
     }
-    // Горизонтальные линии сетки (проценты)
-    for (let y=plotY0;y<=plotY1;y+=60){ 
-      g.moveTo(plotX0,y); 
-      g.lineTo(plotX1,y); 
-    }
+    for (let y=0;y<=canvasHeight;y+=60){ g.moveTo(0,y); g.lineTo(canvasWidth,y); }
     g.stroke();
 
-    // Подписи Y-оси (проценты)
-    g.fillStyle = '#64748b'; g.font = '11px system-ui, sans-serif'; g.textAlign = 'right'; g.textBaseline = 'middle';
-    const percentSteps = [0, 25, 50, 75, 100];
-    for (let p of percentSteps) {
-      const y = plotY1 - (p/100) * plotHeight;
-      g.fillText(p + '%', plotX0 - 8, y);
+    g.fillStyle='#94a3b8'; g.font='12px "Inter", system-ui';
+    for (let sec=0; sec<=HISTORY_SEC; sec+=5){
+      const x = canvasWidth - sec*pxPerSec + 4;
+      const label = sec===0 ? '0 с' : `-${sec} с`;
+      g.fillText(label, Math.max(4, Math.min(canvasWidth-34, x)), canvasHeight-8);
     }
 
-    // Подписи X-оси (время в секундах)
-    g.textAlign = 'center'; g.textBaseline = 'top';
-    if (audioCtx && running) {
-      // Показываем относительное время: 0 (текущий момент), -5, -10, -15...
-      const now = audioCtx.currentTime;
-      const timeStep = 5; // шаг 5 секунд
-      const maxTime = Math.floor(plotWidth / 60); // максимальное время в секундах (60 пикселей/сек)
-      for (let t = 0; t <= maxTime; t += timeStep) {
-        const x = plotX1 - t * 60;
-        if (x >= plotX0) {
-          g.fillText(t === 0 ? '0 с' : '-' + t + ' с', x, plotY1 + 5);
+    if (currentPhase){
+      g.save();
+      g.globalAlpha=0.08;
+      g.fillStyle = currentPhase==='Вдох' ? 'var(--good)' : 'var(--warn)';
+      g.fillRect(0, canvasHeight-40, canvasWidth, 40);
+      g.restore();
+    }
+
+    if (recordSegments.length && latestTime){
+      g.save();
+      g.fillStyle='rgba(239,68,68,0.06)';
+      recordSegments.forEach(seg=>{
+        const segEnd = seg.end ?? latestTime;
+        if (segEnd < latestTime - HISTORY_SEC) return;
+        const segStart = Math.max(seg.start, latestTime - HISTORY_SEC);
+        const width = segEnd - segStart;
+        if (width<=0) return;
+        const x1 = canvasWidth - Math.max(0,(latestTime - segEnd)*pxPerSec);
+        const x2 = canvasWidth - Math.max(0,(latestTime - segStart)*pxPerSec);
+        g.fillRect(x1,0,Math.max(2,x2-x1),canvasHeight);
+      });
+      g.restore();
+    }
+
+    drawReferenceCurve(latestTime, pxPerSec);
+
+    if (drawPoints.length){
+      const stats = robustStats(envHistory.length?envHistory:drawPoints.map(p=>p.v));
+      const toRatio = (val)=>levelToRatio(val, stats.median, stats.mad);
+      const toY = (val)=>{
+        const r = toRatio(val);
+        return canvasHeight - r*(canvasHeight-6) - 3;
+      };
+
+      let lastX=null, lastY=null, lastColor=null, pathActive=false;
+      g.lineWidth=2;
+      drawPoints.forEach((pt, idx)=>{
+        const x = canvasWidth - Math.max(0,(latestTime - pt.t)*pxPerSec);
+        const y = toY(pt.v);
+        const midT = idx===0 ? pt.t : (pt.t + drawPoints[idx-1].t)/2;
+        const color = colorForTime(midT);
+        if (!pathActive || color!==lastColor){
+          if (pathActive) g.stroke();
+          g.beginPath();
+          g.strokeStyle = color || PHASE_COLORS[''];
+          g.moveTo(lastX ?? x, lastY ?? y);
+          pathActive=true;
         }
-      }
-    } else {
-      // Когда не запущено, показываем статичную шкалу
-      for (let t = 0; t <= 20; t += 5) {
-        const x = plotX1 - t * 60;
-        if (x >= plotX0) {
-          g.fillText(t === 0 ? '0 с' : '-' + t + ' с', x, plotY1 + 5);
-        }
-      }
+        g.lineTo(x,y);
+        lastX=x; lastY=y; lastColor=color;
+      });
+      if (pathActive) g.stroke();
+
+      const cutoff = latestTime - HISTORY_SEC - 0.5;
+      phaseEvents.forEach(evt=>{
+        if (!evt || evt.t<cutoff) return;
+        const x = canvasWidth - Math.max(0,(latestTime - evt.t)*pxPerSec);
+        if (x<0 || x>canvasWidth) return;
+        const y = toY(evt.v);
+        const color = PHASE_COLORS[evt.type] || '#38bdf8';
+        g.fillStyle = color;
+        g.beginPath(); g.arc(x, y, 5, 0, Math.PI*2); g.fill();
+      });
     }
 
-    // Кривая графика
-    g.lineWidth=2; g.strokeStyle='#0ea5e9';
-    g.beginPath();
-    const N = drawBuf.length;
-    const stats = robustStats(envHistory.length?envHistory:drawBuf);
-    const scale = 1/(stats.median + 4*stats.mad + 1e-6);
-    for (let i=0;i<N;i++){
-      const v = Math.max(0, Math.min(1, drawBuf[i]*scale));
-      const y = plotY1 - v * plotHeight;
-      const x = plotX1 - (N - i);
-      if (x < plotX0) continue; // пропускаем точки за левой границей
-      if (i===0 || (plotX1 - (N - (i-1)) < plotX0)) g.moveTo(x,y); 
-      else g.lineTo(x,y);
-    }
-    g.stroke();
-
-    // Маркеры (пики и впадины)
-    function markPoint(pt, color){
-      if (!audioCtx || !pt) return;
-      const age = (audioCtx.currentTime - pt.t);
-      const x = plotX1 - Math.floor(age * 60);
-      if (x<plotX0 || x>plotX1) return;
-      const y = plotY0 + 8;
-      g.fillStyle = color;
-      g.beginPath(); g.arc(x, y, 5, 0, Math.PI*2); g.fill();
-    }
-    markPoint(lastPeak,  '#38bdf8');
-    markPoint(lastTrough,'#fb7185');
-
-    // Пейсинг (пузырь)
     if (paceOn){
       const t = performance.now()/1000 - paceStart;
       const period = 10, inhaleFrac = 0.45;
@@ -451,20 +665,99 @@ registerProcessor('rms-processor', RmsProcessor);
       g.save();
       g.globalAlpha=0.9;
       g.fillStyle = inhale? 'var(--good)' : 'var(--warn)';
-      g.beginPath(); g.arc(plotX1-30, plotY1-30, r, 0, Math.PI*2); g.fill();
+      g.beginPath(); g.arc(canvasWidth-30, canvasHeight-30, r, 0, Math.PI*2); g.fill();
       g.restore();
     }
     requestAnimationFrame(drawLoop);
   }
+
+  function colorForTime(ts){
+    const now = currentTime();
+    if (activePhaseSegment){
+      const end = activePhaseSegment.end ?? now;
+      if (ts>=activePhaseSegment.start && ts<=end){
+        return PHASE_COLORS[activePhaseSegment.type] || PHASE_COLORS[''];
+      }
+    }
+    for (let i=phaseSegments.length-1; i>=0; i--){
+      const seg = phaseSegments[i];
+      const end = seg.end ?? now;
+      if (ts>=seg.start && ts<=end){
+        return PHASE_COLORS[seg.type] || PHASE_COLORS[''];
+      }
+    }
+    return PHASE_COLORS[''];
+  }
+
+  function idealRatioAt(time){
+    if (!isFinite(time) || !IDEAL_TOTAL) return 0;
+    let local = ((time % IDEAL_TOTAL) + IDEAL_TOTAL) % IDEAL_TOTAL;
+    for (const seg of IDEAL_PATTERN){
+      if (local <= seg.dur){
+        if (seg.type==='Вдох') return local/seg.dur;
+        if (seg.type==='Выдох') return 1 - local/seg.dur;
+        if (seg.type==='Пауза1') return 1;
+        if (seg.type==='Пауза2') return 0;
+        return 0;
+      }
+      local -= seg.dur;
+    }
+    return 0;
+  }
+
+  function drawReferenceCurve(latestTime, pxPerSec){
+    if (!latestTime || !pxPerSec) return;
+    g.save();
+    g.lineWidth=1.2;
+    g.strokeStyle='rgba(148,163,184,0.7)';
+    g.setLineDash([6,6]);
+    g.beginPath();
+    for (let x=0; x<=canvasWidth; x+=6){
+      const t = latestTime - (canvasWidth - x)/pxPerSec;
+      const ratio = idealRatioAt(t);
+      const y = canvasHeight - ratio*(canvasHeight-6) - 3;
+      if (x===0) g.moveTo(x,y); else g.lineTo(x,y);
+    }
+    g.stroke();
+    g.restore();
+    g.setLineDash([]);
+  }
+
+  function updateOrb(ratio, phase){
+    if (!orb) return;
+    const level = isFinite(ratio)?ratio:0;
+    const scale = 0.85 + level*0.5;
+    orb.style.transform = `scale(${scale.toFixed(3)})`;
+    orb.classList.toggle('inhale', phase==='Вдох');
+    orb.classList.toggle('exhale', phase==='Выдох');
+    orb.classList.toggle('idle', level<0.02 && !running);
+  }
   requestAnimationFrame(drawLoop);
+
+  window.addEventListener('load', ()=>{
+    ensureRunning();
+  });
 
   // ===== Export
   exportBtn.onclick = () => {
-    const rows = [['t_start(s)','t_end(s)','cycle(s)','inhale(s)','exhale(s)','brpm','I:E','peak_amp','trough_amp']];
-    for (const c of cycles) {
+    const recordedOnly = cycles.filter(c=>c.recorded);
+    const dataset = recordedOnly.length ? recordedOnly : cycles;
+    const rows = [['t_start(s)','t_end(s)','cycle(s)','inhale(s)','exhale(s)','brpm','I:E','peak_amp','trough_amp','recorded']];
+    for (const c of dataset) {
       const brpm = c.tCycle?60/c.tCycle:'';
       const ie = (c.tInhale&&c.tExhale)?(c.tInhale/c.tExhale).toFixed(2):'';
-      rows.push([c.tStart?.toFixed(3)||'', c.tEnd?.toFixed(3)||'', c.tCycle?.toFixed(3)||'', c.tInhale?.toFixed(3)||'', c.tExhale?.toFixed(3)||'', brpm?brpm.toFixed(2):'', ie, c.peakV?.toFixed(5)||'', c.troughV?.toFixed(5)||'']);
+      rows.push([
+        c.tStart?.toFixed(3)||'',
+        c.tEnd?.toFixed(3)||'',
+        c.tCycle?.toFixed(3)||'',
+        c.tInhale?.toFixed(3)||'',
+        c.tExhale?.toFixed(3)||'',
+        brpm?brpm.toFixed(2):'',
+        ie,
+        c.peakV?.toFixed(5)||'',
+        c.troughV?.toFixed(5)||'',
+        c.recorded?1:0
+      ]);
     }
     download('breath_session.csv', rows.map(r=>r.join(',')).join('\n'));
   };
@@ -474,6 +767,8 @@ registerProcessor('rms-processor', RmsProcessor);
     if (!audioCtx) return;
     calibrating=true;
     calibEnd = audioCtx.currentTime + (parseInt(calibRange.value,10)||5);
+    statusEl.textContent='Калибровка...';
+    phaseEl.textContent = currentPhase || '—';
   }
 
 })();
