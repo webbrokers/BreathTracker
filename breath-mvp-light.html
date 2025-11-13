@@ -615,8 +615,6 @@ registerProcessor('rms-processor', RmsProcessor);
       g.restore();
     }
 
-    drawReferenceCurve(latestTime, pxPerSec);
-
     if (drawPoints.length){
       const stats = robustStats(envHistory.length?envHistory:drawPoints.map(p=>p.v));
       const toRatio = (val)=>levelToRatio(val, stats.median, stats.mad);
@@ -625,24 +623,24 @@ registerProcessor('rms-processor', RmsProcessor);
         return canvasHeight - r*(canvasHeight-6) - 3;
       };
 
-      let lastX=null, lastY=null, lastColor=null, pathActive=false;
-      g.lineWidth=2;
+      const latestPoint = drawPoints[drawPoints.length-1];
+      const latestRatio = latestPoint ? toRatio(latestPoint.v) : null;
+      const refShift = (latestRatio!=null) ? (latestRatio - idealRatioAt(latestTime)) : 0;
+      drawReferenceCurve(latestTime, pxPerSec, refShift);
+
+      g.save();
+      g.lineWidth=3.2;
+      g.strokeStyle='#1d4ed8';
+      g.lineCap='round';
+      g.lineJoin='round';
+      g.beginPath();
       drawPoints.forEach((pt, idx)=>{
         const x = canvasWidth - Math.max(0,(latestTime - pt.t)*pxPerSec);
         const y = toY(pt.v);
-        const midT = idx===0 ? pt.t : (pt.t + drawPoints[idx-1].t)/2;
-        const color = colorForTime(midT);
-        if (!pathActive || color!==lastColor){
-          if (pathActive) g.stroke();
-          g.beginPath();
-          g.strokeStyle = color || PHASE_COLORS[''];
-          g.moveTo(lastX ?? x, lastY ?? y);
-          pathActive=true;
-        }
-        g.lineTo(x,y);
-        lastX=x; lastY=y; lastColor=color;
+        if (idx===0) g.moveTo(x,y); else g.lineTo(x,y);
       });
-      if (pathActive) g.stroke();
+      g.stroke();
+      g.restore();
 
       const cutoff = latestTime - HISTORY_SEC - 0.5;
       phaseEvents.forEach(evt=>{
@@ -671,24 +669,6 @@ registerProcessor('rms-processor', RmsProcessor);
     requestAnimationFrame(drawLoop);
   }
 
-  function colorForTime(ts){
-    const now = currentTime();
-    if (activePhaseSegment){
-      const end = activePhaseSegment.end ?? now;
-      if (ts>=activePhaseSegment.start && ts<=end){
-        return PHASE_COLORS[activePhaseSegment.type] || PHASE_COLORS[''];
-      }
-    }
-    for (let i=phaseSegments.length-1; i>=0; i--){
-      const seg = phaseSegments[i];
-      const end = seg.end ?? now;
-      if (ts>=seg.start && ts<=end){
-        return PHASE_COLORS[seg.type] || PHASE_COLORS[''];
-      }
-    }
-    return PHASE_COLORS[''];
-  }
-
   function idealRatioAt(time){
     if (!isFinite(time) || !IDEAL_TOTAL) return 0;
     let local = ((time % IDEAL_TOTAL) + IDEAL_TOTAL) % IDEAL_TOTAL;
@@ -705,16 +685,18 @@ registerProcessor('rms-processor', RmsProcessor);
     return 0;
   }
 
-  function drawReferenceCurve(latestTime, pxPerSec){
+  function drawReferenceCurve(latestTime, pxPerSec, ratioShift=0){
     if (!latestTime || !pxPerSec) return;
     g.save();
-    g.lineWidth=1.2;
+    g.lineWidth=1.4;
     g.strokeStyle='rgba(148,163,184,0.7)';
-    g.setLineDash([6,6]);
+    g.setLineDash([4,4]);
     g.beginPath();
-    for (let x=0; x<=canvasWidth; x+=6){
+    const step = Math.max(2, canvasWidth/450);
+    for (let x=0; x<=canvasWidth; x+=step){
       const t = latestTime - (canvasWidth - x)/pxPerSec;
-      const ratio = idealRatioAt(t);
+      let ratio = idealRatioAt(t) + ratioShift;
+      ratio = Math.max(0.02, Math.min(0.98, ratio));
       const y = canvasHeight - ratio*(canvasHeight-6) - 3;
       if (x===0) g.moveTo(x,y); else g.lineTo(x,y);
     }
