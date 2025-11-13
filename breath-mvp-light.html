@@ -69,7 +69,7 @@
   <section id="left">
     <canvas id="plot" width="1400" height="360"></canvas>
     <div class="note">Поднесите микрофон ближе к носу/рту. Если «Уровень» ниже 10–20 %, увеличьте «Усиление» или уменьшите шум.</div>
-    <div class="note">Горизонтальная шкала показывает 60 с истории, вертикальная — уровень сигнала в дБ (от 0 до +30).</div>
+    <div class="note">Горизонтальная шкала показывает 60 с истории, вертикальная — уровень сигнала в дБ (от -70 до -40).</div>
     <div class="orb-wrapper">
       <div id="breathOrb" class="idle"></div>
       <small>«Мембрана» повторяет амплитуду дыхания и помогает использовать интерфейс на мобильных устройствах.</small>
@@ -146,8 +146,8 @@ registerProcessor('rms-processor', RmsProcessor);
   const MIN_SWING = 0.002;
   const MIN_MAD = 0.0002;
   const DRAW_INTERVAL = 0.1; // 10 Гц
-  const DB_MIN = 0;
-  const DB_MAX = 30;
+  const DB_MIN = -70;
+  const DB_MAX = -40;
   const MAX_GHOSTS = 5;
   const GHOST_RESOLUTION = 180;
   const ORB_MIN = 30;
@@ -174,8 +174,7 @@ registerProcessor('rms-processor', RmsProcessor);
     const safe = Math.max(v, 1e-8);
     const log10 = Math.log10 ? Math.log10(safe) : (Math.log(safe)/Math.LN10);
     const raw = 20 * log10;
-    const shifted = raw + DB_MAX;
-    return Math.max(DB_MIN, Math.min(DB_MAX, shifted));
+    return Math.max(DB_MIN, Math.min(DB_MAX, raw));
   }
   function dbToRatio(db){
     const span = DB_MAX - DB_MIN || 1;
