@@ -69,7 +69,7 @@
   <section id="left">
     <canvas id="plot" width="1400" height="360"></canvas>
     <div class="note">Поднесите микрофон ближе к носу/рту. Если «Уровень» ниже 10–20 %, увеличьте «Усиление» или уменьшите шум.</div>
-    <div class="note">Горизонтальная шкала показывает 60 с истории, вертикальная — уровень сигнала в дБ (от -70 до 0).</div>
+    <div class="note">Горизонтальная шкала показывает 60 с истории, вертикальная — уровень сигнала в дБ (от 0 до +30).</div>
     <div class="orb-wrapper">
       <div id="breathOrb" class="idle"></div>
       <small>«Мембрана» повторяет амплитуду дыхания и помогает использовать интерфейс на мобильных устройствах.</small>
@@ -87,8 +87,8 @@
         <span id="alphaVal">0.20</span>
       </div>
       <div class="row"><span class="label">Чувствительность:</span>
-        <input id="sens" type="range" min="0" max="4" step="1" value="2">
-        <span id="sensVal">Средняя</span>
+        <input id="sens" type="range" min="0" max="4" step="1" value="4">
+        <span id="sensVal">Очень высокая</span>
       </div>
       <div class="row"><span class="label">Усиление (×):</span>
         <input id="gain" type="range" min="1" max="20" step="1" value="1">
@@ -146,8 +146,8 @@ registerProcessor('rms-processor', RmsProcessor);
   const MIN_SWING = 0.002;
   const MIN_MAD = 0.0002;
   const DRAW_INTERVAL = 0.1; // 10 Гц
-  const DB_MIN = -70;
-  const DB_MAX = 0;
+  const DB_MIN = 0;
+  const DB_MAX = 30;
   const MAX_GHOSTS = 5;
   const GHOST_RESOLUTION = 180;
   const ORB_MIN = 30;
@@ -173,7 +173,9 @@ registerProcessor('rms-processor', RmsProcessor);
   function rmsToDb(v){
     const safe = Math.max(v, 1e-8);
     const log10 = Math.log10 ? Math.log10(safe) : (Math.log(safe)/Math.LN10);
-    return 20 * log10;
+    const raw = 20 * log10;
+    const shifted = raw + DB_MAX;
+    return Math.max(DB_MIN, Math.min(DB_MAX, shifted));
   }
   function dbToRatio(db){
     const span = DB_MAX - DB_MIN || 1;
@@ -612,7 +614,8 @@ registerProcessor('rms-processor', RmsProcessor);
     g.textBaseline='middle';
     for (let db = DB_MIN; db<=DB_MAX; db+=10){
       const y = dbToY(db);
-      g.fillText(`${db} дБ`, 6, Math.max(10, Math.min(canvasHeight-10, y)));
+      const label = db>0 ? `+${db}` : `${db}`;
+      g.fillText(`${label} дБ`, 6, Math.max(10, Math.min(canvasHeight-10, y)));
     }
 
     if (currentPhase){
@@ -657,10 +660,18 @@ registerProcessor('rms-processor', RmsProcessor);
       g.restore();
     };
 
-    ghostTraces.forEach((trace, idx)=>{
-      const alpha = Math.max(0.08, 0.35 - idx*0.05);
-      renderTrace(trace, '#94a3b8', 1.4, alpha);
-    });
+    const ghostWidths = [2,4,8,12,16];
+    const ghostColors = ['#475569','#64748b','#94a3b8','#cbd5f5','#e2e8f0'];
+    const ghostAlphas = [0.55,0.42,0.3,0.22,0.15];
+    for (let idx = ghostTraces.length-1; idx>=0; idx--){
+      const styleIdx = Math.min(idx, ghostWidths.length-1);
+      renderTrace(
+        ghostTraces[idx],
+        ghostColors[styleIdx] || '#cbd5f5',
+        ghostWidths[styleIdx] || 8,
+        Math.max(0.08, ghostAlphas[styleIdx] ?? 0.15)
+      );
+    }
 
     if (currentTrace.length){
       renderTrace(currentTrace, '#1d4ed8', 3.2, 1);
