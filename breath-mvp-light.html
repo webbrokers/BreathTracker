@@ -28,12 +28,6 @@
   canvas{display:block;width:100%;height:340px;background:#fff;border:1px solid var(--line);border-radius:12px}
   .note{color:var(--muted);font-size:12px;margin-top:6px}
   .pill{display:inline-flex;align-items:center;gap:6px;padding:4px 8px;border:1px solid var(--line);border-radius:999px;color:var(--muted);font-size:12px;background:#fff}
-  .legend{display:flex;gap:8px;margin:8px 0 0 0}
-  .dot{width:10px;height:10px;border-radius:50%}
-  .dot.inhale{background:var(--good)}
-  .dot.exhale{background:var(--warn)}
-  .dot.peak{background:#38bdf8}
-  .dot.trough{background:#fb7185}
   .grid{display:grid;gap:6px}
   .spacer{flex:1}
   a.link{color:var(--accent);text-decoration:none}
@@ -43,9 +37,9 @@
   .record-badge::before{content:"";width:8px;height:8px;border-radius:50%;background:var(--muted);box-shadow:0 0 0 0 rgba(239,68,68,0.4);transition:all .2s ease}
   .record-badge.on{color:#b91c1c}
   .record-badge.on::before{background:#ef4444;box-shadow:0 0 0 6px rgba(239,68,68,0.22)}
-  .orb-wrapper{margin:18px 0 0;display:flex;align-items:center;gap:18px;flex-wrap:wrap}
-  .orb-wrapper small{color:var(--muted)}
-  #breathOrb{width:120px;height:120px;border-radius:50%;background:radial-gradient(circle at center,#dbeafe,#93c5fd);box-shadow:0 6px 24px rgba(37,99,235,0.35);transition:transform .15s ease,box-shadow .15s ease,background .2s ease}
+  .orb-wrapper{position:fixed;left:50%;bottom:32px;transform:translateX(-50%);display:flex;flex-direction:column;align-items:center;gap:8px;pointer-events:none;z-index:10}
+  .orb-wrapper small{color:var(--muted);text-align:center;max-width:320px}
+  #breathOrb{width:30px;height:30px;border-radius:50%;background:radial-gradient(circle at center,#dbeafe,#93c5fd);box-shadow:0 4px 18px rgba(37,99,235,0.35);transition:background .2s ease,box-shadow .2s ease}
   #breathOrb.inhale{background:radial-gradient(circle at center,#dcfce7,#86efac)}
   #breathOrb.exhale{background:radial-gradient(circle at center,#fef3c7,#fcd34d)}
   #breathOrb.idle{opacity:0.7}
@@ -74,14 +68,8 @@
 <main>
   <section id="left">
     <canvas id="plot" width="1400" height="360"></canvas>
-    <div class="legend">
-      <span class="pill"><span class="dot inhale"></span> Вдох</span>
-      <span class="pill"><span class="dot exhale"></span> Выдох</span>
-      <span class="pill"><span class="dot peak"></span> Пик</span>
-      <span class="pill"><span class="dot trough"></span> Впадина</span>
-    </div>
     <div class="note">Поднесите микрофон ближе к носу/рту. Если «Уровень» ниже 10–20 %, увеличьте «Усиление» или уменьшите шум.</div>
-    <div class="note">Серая линия — эталонный цикл (вдох 4 с → пауза 2 с → выдох 6 с → пауза 3 с).</div>
+    <div class="note">Горизонтальная шкала показывает 60 с истории, вертикальная — уровень сигнала в дБ (от -70 до 0).</div>
     <div class="orb-wrapper">
       <div id="breathOrb" class="idle"></div>
       <small>«Мембрана» повторяет амплитуду дыхания и помогает использовать интерфейс на мобильных устройствах.</small>
@@ -103,8 +91,8 @@
         <span id="sensVal">Средняя</span>
       </div>
       <div class="row"><span class="label">Усиление (×):</span>
-        <input id="gain" type="range" min="1" max="20" step="1" value="6">
-        <span id="gainVal">6×</span>
+        <input id="gain" type="range" min="1" max="20" step="1" value="1">
+        <span id="gainVal">1×</span>
       </div>
 
       <div class="stat"><span class="label">Статус</span><b id="status">Ожидание</b></div>
@@ -153,10 +141,18 @@ class RmsProcessor extends AudioWorkletProcessor {
 registerProcessor('rms-processor', RmsProcessor);
 `;
 
-  const HISTORY_SEC = 30;
+  const HISTORY_SEC = 60;
   const REF_BLOCK = 1024;
   const MIN_SWING = 0.002;
   const MIN_MAD = 0.0002;
+  const DRAW_INTERVAL = 0.1; // 10 Гц
+  const DB_MIN = -70;
+  const DB_MAX = 0;
+  const MAX_GHOSTS = 5;
+  const GHOST_RESOLUTION = 180;
+  const ORB_MIN = 30;
+  const ORB_MAX = 200;
+  const ORB_INTERVAL_MS = 1000/20;
 
   // ===== Helpers
   const $ = id => document.getElementById(id);
@@ -174,11 +170,22 @@ registerProcessor('rms-processor', RmsProcessor);
     return {median:m, mad: mad || 0.0001};
   }
   function clampInRange(v,min,max){ return v>=min && v<=max; }
-  function levelToRatio(v, median, mad){
-    const floor = Math.max(0, median - 1.5*mad);
-    const span = Math.max(MIN_MAD*4, mad*8);
-    const relative = Math.max(0, v - floor);
-    return Math.max(0, Math.min(1, relative / span));
+  function rmsToDb(v){
+    const safe = Math.max(v, 1e-8);
+    const log10 = Math.log10 ? Math.log10(safe) : (Math.log(safe)/Math.LN10);
+    return 20 * log10;
+  }
+  function dbToRatio(db){
+    const span = DB_MAX - DB_MIN || 1;
+    const clamped = Math.max(DB_MIN, Math.min(DB_MAX, db));
+    return (clamped - DB_MIN) / span;
+  }
+  function rmsToRatio(v){
+    return dbToRatio(rmsToDb(v));
+  }
+  function dbToY(db){
+    const ratio = dbToRatio(db);
+    return canvasHeight - ratio*(canvasHeight-6) - 3;
   }
 
   // ===== DOM
@@ -218,31 +225,16 @@ registerProcessor('rms-processor', RmsProcessor);
   let ema=0, running=false, calibrating=false, calibEnd=0;
   let envHistory=[], derPrev=0, prevEma=0;
   let lastPeak=null, lastTrough=null, inhaleStartT=null;
-  let lastCycle=null, cycles=[], drawPoints=[];
+  let lastCycle=null, cycles=[];
+  let currentTrace=[], ghostTraces=[], traceStartTime=null;
   let paceOn=false, paceStart=0;
   let lastEnvelopeTime=null;
   let currentPhase='';
   let recording=false, recordSegments=[], activeRecordSegment=null;
   let lastDisplayRatio=0, lastPlotStoreTime=0;
-  let phaseSegments=[], activePhaseSegment=null;
-  let phaseEvents=[];
+  let orbTargetRatio=0, orbDisplayedRatio=0, orbPhase='';
+  let orbTimer=null;
   let resumeBound=false;
-
-  const DRAW_INTERVAL = 0.12; // ~8 Гц
-  const PHASE_COLORS = {
-    'Вдох':'var(--good)',
-    'Выдох':'var(--warn)',
-    'Пик':'#38bdf8',
-    'Впадина':'#fb7185',
-    '': 'var(--curve)'
-  };
-  const IDEAL_PATTERN = [
-    {type:'Вдох', dur:4},
-    {type:'Пауза1', dur:2},
-    {type:'Выдох', dur:6},
-    {type:'Пауза2', dur:3}
-  ];
-  const IDEAL_TOTAL = IDEAL_PATTERN.reduce((s,p)=>s+p.dur,0);
 
   // UI binds
   alphaRange.oninput=()=>alphaVal.textContent=(+alphaRange.value).toFixed(2);
@@ -274,9 +266,10 @@ registerProcessor('rms-processor', RmsProcessor);
   }
 
   function trimRecordSegments(now=currentTime()){
+    const horizon = HISTORY_SEC * (MAX_GHOSTS + 1);
     recordSegments = recordSegments.filter(seg=>{
       const end = seg.end ?? now;
-      return now - end < HISTORY_SEC*2;
+      return now - end < horizon;
     });
   }
 
@@ -302,41 +295,60 @@ registerProcessor('rms-processor', RmsProcessor);
     });
   }
 
-  function setPhase(phase, time=currentTime()){
+  function storeTracePoint(now, value){
+    if (traceStartTime==null){
+      traceStartTime = now;
+    }
+    let offset = now - traceStartTime;
+    if (offset >= HISTORY_SEC){
+      finalizeTrace();
+      currentTrace = [];
+      traceStartTime = now;
+      offset = 0;
+    }
+    currentTrace.push({t:offset, db:rmsToDb(value)});
+  }
+
+  function finalizeTrace(){
+    if (!currentTrace.length) return;
+    const ghost = buildGhostTrace(currentTrace);
+    if (!ghost.length) return;
+    ghostTraces.unshift(ghost);
+    if (ghostTraces.length>MAX_GHOSTS) ghostTraces.pop();
+  }
+
+  function buildGhostTrace(points){
+    if (!points.length) return [];
+    const step = HISTORY_SEC / GHOST_RESOLUTION;
+    const ghost=[];
+    for (let i=0; i<=GHOST_RESOLUTION; i++){
+      const t = Math.min(HISTORY_SEC, i*step);
+      ghost.push({t, db: sampleTraceAt(points, t)});
+    }
+    return ghost;
+  }
+
+  function sampleTraceAt(points, targetT){
+    if (!points.length) return DB_MIN;
+    if (targetT <= points[0].t) return points[0].db;
+    for (let i=1; i<points.length; i++){
+      const prev = points[i-1];
+      const curr = points[i];
+      if (targetT <= curr.t){
+        const span = Math.max(0.0001, curr.t - prev.t);
+        const ratio = (targetT - prev.t)/span;
+        return prev.db + ratio*(curr.db - prev.db);
+      }
+    }
+    return points[points.length-1].db;
+  }
+
+  function setPhase(phase){
     currentPhase = phase || '';
     phaseEl.textContent = currentPhase || '—';
     if (running && !calibrating){
       statusEl.textContent = currentPhase || 'Поток активен';
     }
-    if (phase==='Вдох' || phase==='Выдох'){
-      if (activePhaseSegment && activePhaseSegment.type===phase){
-        activePhaseSegment.end = time;
-      } else {
-        if (activePhaseSegment){
-          activePhaseSegment.end = time;
-          phaseSegments.push(activePhaseSegment);
-        }
-        activePhaseSegment = {start:time, end:null, type:phase};
-      }
-      trimPhaseSegments(time);
-    } else if (!phase && activePhaseSegment){
-      activePhaseSegment.end = time;
-      phaseSegments.push(activePhaseSegment);
-      activePhaseSegment=null;
-      trimPhaseSegments(time);
-    }
-  }
-
-  function trimPhaseSegments(now=currentTime()){
-    phaseSegments = phaseSegments.filter(seg=>{
-      const end = seg.end ?? now;
-      return now - end < HISTORY_SEC*2;
-    });
-  }
-
-  function addPhaseEvent(type, time, value){
-    phaseEvents.push({type, t:time, v:value});
-    while(phaseEvents.length>400){ phaseEvents.shift(); }
   }
 
   // ===== Start/Stop
@@ -410,7 +422,7 @@ registerProcessor('rms-processor', RmsProcessor);
     if (stream){ stream.getTracks().forEach(t=>t.stop()); }
     if (workletUrl){ URL.revokeObjectURL(workletUrl); workletUrl=null; }
     audioCtx=source=processor=stream=null;
-    resetLogic(true);
+    resetLogic(false, {preserveTraces:true});
     setRecordingState(false);
     recordSegments=[]; activeRecordSegment=null;
     statusEl.textContent='Ожидание';
@@ -467,10 +479,9 @@ registerProcessor('rms-processor', RmsProcessor);
     trimRecordSegments(now);
 
     if (now - lastPlotStoreTime >= DRAW_INTERVAL){
-      drawPoints.push({t:now, v:ema});
+      storeTracePoint(now, ema);
       lastPlotStoreTime = now;
     }
-    while(drawPoints.length && now - drawPoints[0].t > HISTORY_SEC+2){ drawPoints.shift(); }
 
     const {median, mad} = robustStats(envHistory);
     const safeMad = Math.max(mad, MIN_MAD);
@@ -479,7 +490,6 @@ registerProcessor('rms-processor', RmsProcessor);
 
     if (derPrev>0 && der<=0 && ema>hi){
       lastPeak = {t:now, v:ema};
-      addPhaseEvent('Пик', now, ema);
       setPhase('Выдох', now);
       if (lastTrough){
         const tInhale = now - lastTrough.t;
@@ -491,7 +501,6 @@ registerProcessor('rms-processor', RmsProcessor);
 
     if (derPrev<0 && der>=0 && ema<lo){
       lastTrough = {t:now, v:ema};
-      addPhaseEvent('Впадина', now, ema);
       setPhase('Вдох', now);
       if (lastPeak){
         const tExhale = now - lastPeak.t;
@@ -528,15 +537,22 @@ registerProcessor('rms-processor', RmsProcessor);
     }
     phaseEl.textContent = currentPhase || '—';
 
-    updateStats(ema, median, safeMad);
+    updateStats(ema);
   }
 
-  function resetLogic(full=false){
+  function resetLogic(full=false, options={}){
+    const preserveTraces = !!options.preserveTraces;
     ema=0; envHistory=[]; derPrev=0; prevEma=0; lastPeak=lastTrough=null; inhaleStartT=null;
     lastEnvelopeTime=null; lastPlotStoreTime=0;
-    phaseSegments=[]; activePhaseSegment=null; phaseEvents=[];
-    setPhase('', currentTime());
-    if (full){ cycles=[]; lastCycle=null; drawPoints=[]; }
+    setPhase('');
+    if (full){
+      cycles=[]; lastCycle=null;
+      if (!preserveTraces){
+        currentTrace=[]; ghostTraces=[]; traceStartTime=null;
+      }
+    } else if (!preserveTraces){
+      traceStartTime=null;
+    }
   }
   function currentBRPM(){
     if (cycles.length<2) return null;
@@ -545,8 +561,8 @@ registerProcessor('rms-processor', RmsProcessor);
     const med=lastN.sort((a,b)=>a-b)[Math.floor(lastN.length/2)];
     return med?60/med:null;
   }
-  function updateStats(level, median, mad){
-    const ratio = levelToRatio(level, median, mad);
+  function updateStats(level){
+    const ratio = rmsToRatio(level);
     lastDisplayRatio = ratio;
     lvlbar.style.width = (ratio*100).toFixed(0)+'%';
     updateOrb(ratio, currentPhase);
@@ -572,23 +588,31 @@ registerProcessor('rms-processor', RmsProcessor);
   // ===== Drawing
   function drawLoop(){
     g.clearRect(0,0,canvasWidth,canvasHeight);
-    const latestTime = drawPoints.length ? drawPoints[drawPoints.length-1].t : 0;
     const pxPerSec = canvasWidth / HISTORY_SEC;
 
     g.strokeStyle='#e5e7eb'; g.lineWidth=1; g.globalAlpha=1;
     g.beginPath();
     for (let sec=0; sec<=HISTORY_SEC; sec+=5){
-      const x = canvasWidth - sec*pxPerSec;
+      const x = sec*pxPerSec;
       g.moveTo(x,0); g.lineTo(x,canvasHeight);
     }
-    for (let y=0;y<=canvasHeight;y+=60){ g.moveTo(0,y); g.lineTo(canvasWidth,y); }
+    const dbStep = 10;
+    for (let db = DB_MIN; db<=DB_MAX; db+=dbStep){
+      const y = dbToY(db);
+      g.moveTo(0,y); g.lineTo(canvasWidth,y);
+    }
     g.stroke();
 
     g.fillStyle='#94a3b8'; g.font='12px "Inter", system-ui';
-    for (let sec=0; sec<=HISTORY_SEC; sec+=5){
-      const x = canvasWidth - sec*pxPerSec + 4;
-      const label = sec===0 ? '0 с' : `-${sec} с`;
-      g.fillText(label, Math.max(4, Math.min(canvasWidth-34, x)), canvasHeight-8);
+    g.textBaseline='bottom';
+    for (let sec=0; sec<=HISTORY_SEC; sec+=10){
+      const x = Math.max(4, Math.min(canvasWidth-34, sec*pxPerSec + 4));
+      g.fillText(`${sec} с`, x, canvasHeight-4);
+    }
+    g.textBaseline='middle';
+    for (let db = DB_MIN; db<=DB_MAX; db+=10){
+      const y = dbToY(db);
+      g.fillText(`${db} дБ`, 6, Math.max(10, Math.min(canvasHeight-10, y)));
     }
 
     if (currentPhase){
@@ -599,59 +623,47 @@ registerProcessor('rms-processor', RmsProcessor);
       g.restore();
     }
 
-    if (recordSegments.length && latestTime){
+    if (recordSegments.length && traceStartTime!=null){
+      const windowStart = traceStartTime;
+      const windowEnd = windowStart + HISTORY_SEC;
       g.save();
       g.fillStyle='rgba(239,68,68,0.06)';
       recordSegments.forEach(seg=>{
-        const segEnd = seg.end ?? latestTime;
-        if (segEnd < latestTime - HISTORY_SEC) return;
-        const segStart = Math.max(seg.start, latestTime - HISTORY_SEC);
-        const width = segEnd - segStart;
-        if (width<=0) return;
-        const x1 = canvasWidth - Math.max(0,(latestTime - segEnd)*pxPerSec);
-        const x2 = canvasWidth - Math.max(0,(latestTime - segStart)*pxPerSec);
+        const segEnd = Math.min(seg.end ?? currentTime(), windowEnd);
+        const segStart = Math.max(seg.start, windowStart);
+        if (segEnd <= windowStart || segStart >= windowEnd) return;
+        const x1 = ((segStart - windowStart)/HISTORY_SEC)*canvasWidth;
+        const x2 = ((segEnd - windowStart)/HISTORY_SEC)*canvasWidth;
         g.fillRect(x1,0,Math.max(2,x2-x1),canvasHeight);
       });
       g.restore();
     }
 
-    if (drawPoints.length){
-      const stats = robustStats(envHistory.length?envHistory:drawPoints.map(p=>p.v));
-      const toRatio = (val)=>levelToRatio(val, stats.median, stats.mad);
-      const toY = (val)=>{
-        const r = toRatio(val);
-        return canvasHeight - r*(canvasHeight-6) - 3;
-      };
-
-      const latestPoint = drawPoints[drawPoints.length-1];
-      const latestRatio = latestPoint ? toRatio(latestPoint.v) : null;
-      const refShift = (latestRatio!=null) ? (latestRatio - idealRatioAt(latestTime)) : 0;
-      drawReferenceCurve(latestTime, pxPerSec, refShift);
-
+    const renderTrace=(points,color,width,alpha=1)=>{
+      if (!points || points.length<2) return;
       g.save();
-      g.lineWidth=3.2;
-      g.strokeStyle='#1d4ed8';
+      g.lineWidth=width;
+      g.strokeStyle=color;
+      g.globalAlpha=alpha;
       g.lineCap='round';
       g.lineJoin='round';
       g.beginPath();
-      drawPoints.forEach((pt, idx)=>{
-        const x = canvasWidth - Math.max(0,(latestTime - pt.t)*pxPerSec);
-        const y = toY(pt.v);
+      points.forEach((pt, idx)=>{
+        const x = Math.max(0, Math.min(canvasWidth, (pt.t / HISTORY_SEC)*canvasWidth));
+        const y = dbToY(pt.db);
         if (idx===0) g.moveTo(x,y); else g.lineTo(x,y);
       });
       g.stroke();
       g.restore();
+    };
 
-      const cutoff = latestTime - HISTORY_SEC - 0.5;
-      phaseEvents.forEach(evt=>{
-        if (!evt || evt.t<cutoff) return;
-        const x = canvasWidth - Math.max(0,(latestTime - evt.t)*pxPerSec);
-        if (x<0 || x>canvasWidth) return;
-        const y = toY(evt.v);
-        const color = PHASE_COLORS[evt.type] || '#38bdf8';
-        g.fillStyle = color;
-        g.beginPath(); g.arc(x, y, 5, 0, Math.PI*2); g.fill();
-      });
+    ghostTraces.forEach((trace, idx)=>{
+      const alpha = Math.max(0.08, 0.35 - idx*0.05);
+      renderTrace(trace, '#94a3b8', 1.4, alpha);
+    });
+
+    if (currentTrace.length){
+      renderTrace(currentTrace, '#1d4ed8', 3.2, 1);
     }
 
     if (paceOn){
@@ -669,52 +681,28 @@ registerProcessor('rms-processor', RmsProcessor);
     requestAnimationFrame(drawLoop);
   }
 
-  function idealRatioAt(time){
-    if (!isFinite(time) || !IDEAL_TOTAL) return 0;
-    let local = ((time % IDEAL_TOTAL) + IDEAL_TOTAL) % IDEAL_TOTAL;
-    for (const seg of IDEAL_PATTERN){
-      if (local <= seg.dur){
-        if (seg.type==='Вдох') return local/seg.dur;
-        if (seg.type==='Выдох') return 1 - local/seg.dur;
-        if (seg.type==='Пауза1') return 1;
-        if (seg.type==='Пауза2') return 0;
-        return 0;
-      }
-      local -= seg.dur;
-    }
-    return 0;
-  }
-
-  function drawReferenceCurve(latestTime, pxPerSec, ratioShift=0){
-    if (!latestTime || !pxPerSec) return;
-    g.save();
-    g.lineWidth=1.4;
-    g.strokeStyle='rgba(148,163,184,0.7)';
-    g.setLineDash([4,4]);
-    g.beginPath();
-    const step = Math.max(2, canvasWidth/450);
-    for (let x=0; x<=canvasWidth; x+=step){
-      const t = latestTime - (canvasWidth - x)/pxPerSec;
-      let ratio = idealRatioAt(t) + ratioShift;
-      ratio = Math.max(0.02, Math.min(0.98, ratio));
-      const y = canvasHeight - ratio*(canvasHeight-6) - 3;
-      if (x===0) g.moveTo(x,y); else g.lineTo(x,y);
-    }
-    g.stroke();
-    g.restore();
-    g.setLineDash([]);
-  }
-
   function updateOrb(ratio, phase){
+    orbTargetRatio = Math.max(0, Math.min(1, isFinite(ratio)?ratio:0));
+    orbPhase = phase || '';
+    if (!orbTimer){
+      orbTimer = setInterval(renderOrbFrame, ORB_INTERVAL_MS);
+    }
+  }
+
+  function renderOrbFrame(){
     if (!orb) return;
-    const level = isFinite(ratio)?ratio:0;
-    const scale = 0.85 + level*0.5;
-    orb.style.transform = `scale(${scale.toFixed(3)})`;
-    orb.classList.toggle('inhale', phase==='Вдох');
-    orb.classList.toggle('exhale', phase==='Выдох');
-    orb.classList.toggle('idle', level<0.02 && !running);
+    const diff = orbTargetRatio - orbDisplayedRatio;
+    orbDisplayedRatio += diff * 0.35;
+    const size = ORB_MIN + (ORB_MAX - ORB_MIN) * orbDisplayedRatio;
+    orb.style.width = size.toFixed(1)+'px';
+    orb.style.height = size.toFixed(1)+'px';
+    orb.style.boxShadow = `0 8px 30px rgba(37,99,235,${0.25 + orbDisplayedRatio*0.35})`;
+    orb.classList.toggle('inhale', orbPhase==='Вдох');
+    orb.classList.toggle('exhale', orbPhase==='Выдох');
+    orb.classList.toggle('idle', !running);
   }
   requestAnimationFrame(drawLoop);
+  renderOrbFrame();
 
   window.addEventListener('load', ()=>{
     ensureRunning();
